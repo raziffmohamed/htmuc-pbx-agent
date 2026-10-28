@@ -43,17 +43,34 @@ class Pbx:
         return [line.split('\t') for line in p.stdout.splitlines()]
 
 
-_HINT = re.compile(r'^\s*(\d{1,16})@(T(\d{1,8})_[\w-]+)\s*:(.*)$')
+_HINT = re.compile(r'^\s*(\d{1,16})@((?:T(\d{1,8})_)?[\w-]+)\s*:(.*)$')
 
 
-def parse_hints(text):
-    """{(pbx_tenant, extension): [text after the colon, ...]} for hints in tenant contexts such as T9_xxx."""
+def parse_hints(text, default_tenant=None):
+    """{(pbx_tenant, extension): [text after the colon, ...]}.
+    Tenants other than the PBX default use contexts such as T9_extension-hints. The default tenant's hints sit in the
+    plain `extension-hints` context, so they are attributed to `default_tenant` when it is known."""
     out = {}
     for line in text.splitlines():
         m = _HINT.match(line)
-        if m:
-            out.setdefault((m.group(3), m.group(1)), []).append(m.group(4))
+        if not m:
+            continue
+        tenant = m.group(3)
+        if tenant is None:
+            if default_tenant is None or m.group(2) != 'extension-hints':
+                continue
+            tenant = default_tenant
+        out.setdefault((tenant, m.group(1)), []).append(m.group(4))
     return out
+
+
+def default_tenant(pbx):
+    """PBX tenant id flagged as the default tenant, or None."""
+    try:
+        rows = pbx.sql("SELECT tenant_id FROM ombu_tenants WHERE `default`='yes' LIMIT 1")
+    except PbxError:
+        return None
+    return rows[0][0] if len(rows) == 1 and len(rows[0]) == 1 and re.fullmatch(r'\d{1,8}', rows[0][0]) else None
 
 
 _DBLINE = re.compile(r'^(/[^\s:]*)\s*:\s*(.*?)\s*$')

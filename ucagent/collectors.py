@@ -4,7 +4,7 @@ scope entries are (uc_tenant_id, pbx_tenant_id, extension); snapshot keys are "<
 """
 import re
 
-from .pbx import FamilyDb, parse_hints
+from .pbx import FamilyDb, default_tenant, parse_hints
 
 FAMILY = re.compile(r'^[A-Za-z0-9_-]{4,100}$')
 EXT = re.compile(r'^\d{1,16}$')
@@ -39,12 +39,13 @@ def hint_state(text):
 
 
 def collect_blf(pbx, scope, families):
-    hints = parse_hints(pbx.ast('core show hints'))
+    dt = default_tenant(pbx)
+    hints = parse_hints(pbx.ast('core show hints'), dt)
     try:
         custom_text = pbx.ast('database show CustomDevstate')
     except Exception:
         custom_text = ''
-    custom = {m.group(1): m.group(2).upper() for m in re.finditer(r'^/CustomDevstate/(T\d+_DND_\d+)\s*:\s*([A-Z_]+)', custom_text, re.M | re.I)}
+    custom = {m.group(1): m.group(2).upper() for m in re.finditer(r'^/CustomDevstate/((?:T\d+_)?DND_\d+)\s*:\s*([A-Z_]+)', custom_text, re.M | re.I)}
     db = None
     states, mismatches = {}, {}
     for uc, p, ext in valid_entries(scope):
@@ -54,6 +55,8 @@ def collect_blf(pbx, scope, families):
         key = '%d:%s' % (uc, ext)
         states[key] = hint_state(found[0])
         family, c = families.get(p), custom.get('T%s_DND_%s' % (p, ext))
+        if c is None and p == dt:
+            c = custom.get('DND_%s' % ext)           # the default tenant's states carry no T<id>_ prefix
         if not family or not FAMILY.match(family) or c is None:
             continue
         if db is None:

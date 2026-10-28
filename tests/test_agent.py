@@ -12,6 +12,8 @@ HINTS = """-= Registered Asterisk Dial Plan Hints =-
 102@T1_internal : PJSIP/T1_102 State:Idle Watchers 1
 102@T1_other : PJSIP/T1_102 State:Idle Watchers 1
 *65@default : Custom:x State:Idle
+104@extension-hints : PJSIP/104&Custom:DND_104 State:Idle Watchers 1
+701@other-hints : park State:Idle
 """
 DB = """/T1_abc1/diversions/100/DND/enable : no
 /T1_abc1/diversions/101/DND/enable : yes
@@ -21,12 +23,12 @@ DB = """/T1_abc1/diversions/100/DND/enable : no
 /T1_abc1/diversions/102/CFI/destination : evil;rm -rf
 /T14_abc1/diversions/100/DND/enable : no
 """
-CUSTOM = "/CustomDevstate/T1_DND_100 : INUSE\n/CustomDevstate/T1_DND_101 : NOT_INUSE\n"
+CUSTOM = "/CustomDevstate/T1_DND_100 : INUSE\n/CustomDevstate/T1_DND_101 : NOT_INUSE\n/CustomDevstate/DND_104 : UNAVAILABLE\n"
 
 
 class FakePbx:
-    def __init__(self, sql_rows=None, fail_sql=False):
-        self.rows, self.fail_sql, self.calls = sql_rows or [], fail_sql, []
+    def __init__(self, sql_rows=None, fail_sql=False, default=False):
+        self.rows, self.fail_sql, self.calls, self.default = sql_rows or [], fail_sql, [], default
     def ast(self, cmd, timeout=15):
         self.calls.append(cmd)
         if cmd.startswith('database show ') and cmd not in ('database show CustomDevstate',):
@@ -35,6 +37,8 @@ class FakePbx:
         return {'core show hints': HINTS, 'database show': DB, 'database show CustomDevstate': CUSTOM}[cmd]
     def sql(self, q, timeout=20):
         self.calls.append(q)
+        if '`default`' in q:
+            return [['1']] if self.default else []
         if 'ombu_tenants' in q:
             return [['1', 'T1_abc1'], ['14', 'T14_abc1'], ['bad', 'x']]
         if self.fail_sql:
@@ -100,6 +104,12 @@ class Collectors(unittest.TestCase):
         self.assertEqual(out['states'], {'1:100': 'idle', '1:101': 'busy', '50:100': 'ringing'})   # 102 ambiguous, 103 unknown: skipped
         self.assertEqual(out['dnd_mismatches']['1:100'], {'configured_dnd': 'no', 'custom_device_state': 'INUSE', 'expected_device_state': 'NOT_INUSE'})
         self.assertEqual(out['dnd_mismatches']['1:101']['expected_device_state'], 'INUSE')
+
+    def test_blf_default_tenant_plain_context(self):
+        scope = [(1, '1', '104')]
+        self.assertEqual(collect_blf(FakePbx(default=True), scope, FAM)['states'], {'1:104': 'idle'})
+        self.assertEqual(collect_blf(FakePbx(default=False), scope, FAM)['states'], {})      # without a known default tenant the plain context is ignored
+        self.assertNotIn(('1', '701'), parse_hints(HINTS, '1'))                                # only the extension-hints context counts
 
     def test_routing(self):
         s = collect_routing(FakePbx(), SCOPE, FAM)['states']

@@ -73,6 +73,7 @@ def main():
     ap.add_argument('--allow-http-localhost', action='store_true', help=argparse.SUPPRESS)   # tests only
     ap.add_argument('--no-start', action='store_true')
     ap.add_argument('--yes', action='store_true', help='accept defaults, never prompt (needs all values given)')
+    ap.add_argument('--upgrade', action='store_true', help='replace the program files only; keep the config and restart the service')
     ap.add_argument('--uninstall', action='store_true')
     ap.add_argument('--purge', action='store_true')
     args = ap.parse_args()
@@ -80,6 +81,21 @@ def main():
         die('run as root')
     if args.uninstall:
         return uninstall(args)
+    if args.upgrade:
+        if not CFG.exists():
+            die('no %s; this host has no agent to upgrade' % CFG)
+        shutil.rmtree(APP, ignore_errors=True)
+        APP.mkdir(parents=True, mode=0o755)
+        shutil.copytree(HERE / 'ucagent', APP / 'ucagent', ignore=shutil.ignore_patterns('__pycache__'))
+        shutil.copy2(HERE / 'htmuc-agent', APP / 'htmuc-agent')
+        for f in [APP, *APP.rglob('*')]:
+            os.chown(f, 0, 0)
+            os.chmod(f, 0o755 if f.is_dir() or f.name == 'htmuc-agent' else 0o644)
+        shutil.copy2(HERE / 'systemd/htmuc-agent.service', UNIT)
+        subprocess.run(['systemctl', 'daemon-reload'], capture_output=True)
+        r = subprocess.run(['systemctl', 'restart', 'htmuc-agent'], capture_output=True, text=True)
+        print('Upgraded to %s; service restarted%s' % (__version__, '' if r.returncode == 0 else ' FAILED: ' + r.stderr.strip()))
+        return r.returncode
     if sys.version_info < (3, 8):
         die('Python 3.8 or newer is required')
     if not shutil.which('systemctl'):
