@@ -1,7 +1,7 @@
 import json, os, pathlib, shutil, subprocess, sys, tempfile, unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from ucagent import config, protocol
-from ucagent.collectors import collect_blf, collect_cos, collect_routing, hint_state, valid_entries
+from ucagent.collectors import collect_blf, collect_cos, collect_extensions, collect_routing, hint_state, valid_entries
 from ucagent.daemon import Agent
 from ucagent.pbx import Pbx, PbxError, discover_families, parse_astdb, parse_hints
 
@@ -138,6 +138,39 @@ class Collectors(unittest.TestCase):
         self.assertTrue(q.startswith('SELECT')); self.assertNotIn("10'0", q); self.assertNotIn(';', q)
 
 
+class PbxExtensions(unittest.TestCase):
+    ROWS = [['1', '100', 'Test A'], ['1', '105', 'Front <Desk>;'], ['1', '106', 'Nobody'], ['9', '200', 'Other tenant'], ['1', 'x1', 'bad ext']]
+
+    def test_collect_extensions(self):
+        out = collect_extensions(FakePbx(self.ROWS), [], FAM, [(1, '1'), (7, '1')])
+        self.assertEqual(out['status'], 'ok')
+        self.assertEqual(sorted(out['states']), ['1:100', '1:105', '1:106', '7:100', '7:105', '7:106'])   # tenant 9 and the bad extension are dropped
+        self.assertEqual(out['states']['1:105']['name'], 'Front Desk')                                     # markup and punctuation are stripped
+        self.assertEqual(collect_extensions(FakePbx(self.ROWS, fail_sql=True), [], FAM, [(1, '1')])['status'], 'pbx_query_failed')
+        self.assertEqual(collect_extensions(FakePbx(self.ROWS), [], FAM, [])['states'], {})
+
+    def test_blf_reports_extensions_without_a_uc_user(self):
+        out = collect_blf(FakePbx([]), [(1, '1', '100')], FAM, [(1, '1')], {1: ['100', '105', '106']})
+        self.assertEqual(out['states']['1:100'], 'idle')
+        self.assertEqual(out['states']['1:105'], 'unavailable')      # no hint: no device assigned, still listed
+        self.assertEqual(out['states']['1:106'], 'unavailable')
+        self.assertEqual(collect_blf(FakePbx([]), [(1, '1', '100')], FAM)['states'], {'1:100': 'idle'})   # older UC: unchanged behaviour
+
+    def test_daemon_uses_tenants_from_scope(self):
+        cfg = config.load(Config().write(tenant_families=FAM))
+        t = [1000.0]
+        a = Agent(cfg, client=FakeClient([list(SCOPE[0])], tenants=[[1, '1'], [50, '14'], ['x', 'y']]), pbx=FakePbx(TestRows.ROWS), clock=lambda: t[0])
+        a.tick()
+        pushed = dict(a.client.pushed)
+        self.assertIn('1:101', pushed['extensions']['payload']['states'])
+        self.assertIn('1:101', pushed['blf']['payload']['states'])      # extension without scope entry, reported from the extension list
+        self.assertEqual(a.tenants, [(1, '1'), (50, '14')])
+
+
+class TestRows:
+    ROWS = [['1', '100', 'Test A'], ['1', '101', 'Test B'], ['14', '100', 'T14 A']]
+
+
 class Config(unittest.TestCase):
     def write(self, **over):
         d = tempfile.mkdtemp(); p = os.path.join(d, 'a.json')
@@ -163,11 +196,14 @@ class Config(unittest.TestCase):
 
 
 class FakeClient:
-    def __init__(self, entries):
-        self.entries, self.pushed = entries, []
+    def __init__(self, entries, tenants=None):
+        self.entries, self.pushed, self.tenants = entries, [], tenants
     def call(self, method, action, kind='', payload=None, now=None):
         if action == 'scope':
-            return {'ok': True, 'entries': self.entries}
+            r = {'ok': True, 'entries': self.entries}
+            if self.tenants is not None:
+                r['tenants'] = self.tenants
+            return r
         self.pushed.append((kind, payload)); return {'ok': True}
 
 
@@ -180,7 +216,7 @@ class Daemon(unittest.TestCase):
 
     def test_change_driven_and_heartbeat(self):
         a, t = self.mk()
-        self.assertEqual(sorted(a.tick()), ['blf', 'cos', 'routing'])
+        self.assertEqual(sorted(a.tick()), ['blf', 'cos', 'extensions', 'routing'])
         t[0] += 6; self.assertEqual(a.tick(), [])                      # unchanged and young: nothing sent
         t[0] += 20; self.assertEqual(sorted(a.tick()), ['blf', 'routing'])   # past their 20 s max_age: heartbeat; cos waits for 120 s
 

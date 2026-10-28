@@ -2,7 +2,7 @@
 import hashlib, json, sys, time
 
 from . import __version__
-from .collectors import COLLECTORS, valid_entries
+from .collectors import COLLECTORS, valid_entries, valid_tenants
 from .pbx import AstDb, Pbx, PbxError, discover_families, parse_astdb, tenant_paths
 from .protocol import Client, ProtocolError
 
@@ -18,6 +18,7 @@ class Agent:
         self.client = client or Client(cfg['uc_url'], cfg['agent_id'], cfg['secret'], ca_file=cfg.get('ca_file'),
                                        allow_http_localhost=cfg.get('allow_http_localhost', False), version=__version__)
         self.scope, self.scope_at = [], 0.0
+        self.tenants, self.extlist = [], {}      # visible (uc, pbx) tenants; {uc tenant: [extensions]} from the last 'extensions' collection
         self.sent = {}          # kind -> (hash, time)
         self.due = {k: 0.0 for k in COLLECTORS}
         self.fail_streak = 0
@@ -30,7 +31,10 @@ class Agent:
         allowed = {str(x) for x in self.cfg.get('allowed_tenants') or []}
         if allowed:
             entries = [e for e in entries if e[1] in allowed]       # the agent's own limit wins over the UC's scope
-        self.scope, self.scope_at = entries, self.clock()
+        tenants = valid_tenants(data.get('tenants'))         # absent from older UCs: then only the scope's own extensions are reported
+        if allowed:
+            tenants = [t for t in tenants if t[1] in allowed]
+        self.scope, self.tenants, self.scope_at = entries, tenants, self.clock()
         return len(self.scope)
 
     def families(self):
@@ -47,7 +51,14 @@ class Agent:
         return merged
 
     def collect(self, kind):
-        return COLLECTORS[kind](self.pbx, self.scope, self.families())
+        payload = COLLECTORS[kind](self.pbx, self.scope, self.families(), self.tenants, self.extlist)
+        if kind == 'extensions' and payload.get('status') == 'ok':
+            ext = {}
+            for key in payload['states']:
+                uc, e = key.split(':', 1)
+                ext.setdefault(int(uc), []).append(e)
+            self.extlist = ext
+        return payload
 
     def push(self, kind, payload):
         body = {'agent_version': __version__, 'generated_unix': int(self.clock()), 'payload': payload}
@@ -67,7 +78,7 @@ class Agent:
             except ProtocolError as e:
                 log('scope fetch failed: %s' % e)
                 if now - self.scope_at > self.cfg['scope_max_age_seconds']:
-                    self.scope = []       # do not keep reporting for a scope the UC has not confirmed recently
+                    self.scope, self.tenants, self.extlist = [], [], {}       # do not keep reporting for a scope the UC has not confirmed recently
                 raise
         for kind in COLLECTORS:
             if now < self.due[kind]:

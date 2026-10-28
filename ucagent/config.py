@@ -2,7 +2,7 @@
 import json, os, re, stat
 
 DEFAULT_PATH = '/etc/htmuc-agent/agent.json'
-KINDS = ('blf', 'routing', 'cos')           # prefixes is added once its source query is verified on a real PBX
+KINDS = ('extensions', 'blf', 'routing', 'cos')           # prefixes is added once its source query is verified on a real PBX
 DEFAULTS = {
     'asterisk_bin': '/usr/sbin/asterisk',
     'mysql_bin': '/usr/bin/mysql',
@@ -11,8 +11,8 @@ DEFAULTS = {
     'ca_file': None,
     'scope_refresh_seconds': 30,
     'scope_max_age_seconds': 300,
-    'intervals': {'blf': 5, 'routing': 10, 'cos': 60},
-    'max_age': {'blf': 20, 'routing': 20, 'cos': 120},
+    'intervals': {'extensions': 60, 'blf': 5, 'routing': 10, 'cos': 60},
+    'max_age': {'extensions': 600, 'blf': 20, 'routing': 20, 'cos': 120},
     'allow_http_localhost': False,
     'allowed_tenants': [],          # PBX tenant ids this agent may report on; empty = whatever the UC scope lists
 }

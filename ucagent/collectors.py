@@ -40,7 +40,7 @@ def hint_state(text):
     return 'unknown'
 
 
-def collect_blf(pbx, scope, families):
+def collect_blf(pbx, scope, families, tenants=(), extensions=None):
     dt = default_tenant(pbx)
     hints = parse_hints(pbx.ast('core show hints'), dt)
     try:
@@ -72,10 +72,23 @@ def collect_blf(pbx, scope, families):
             continue
         if c != expected:
             mismatches[key] = {'configured_dnd': configured, 'custom_device_state': c, 'expected_device_state': expected}
+    # Every PBX extension of the visible tenants (known from the 'extensions' snapshot), even without a UC user:
+    # report its hint state; one without a hint (no device assigned) is reported as unavailable.
+    pbx_of = {uc: p for uc, p in (tenants or ())}
+    for uc, exts in (extensions or {}).items():
+        p = pbx_of.get(uc)
+        if p is None:
+            continue
+        for ext in exts:
+            key = '%d:%s' % (uc, ext)
+            if key in states:
+                continue
+            found = hints.get((p, ext), [])
+            states[key] = hint_state(found[0]) if len(found) == 1 else 'unavailable'
     return {'states': states, 'dnd_mismatches': mismatches}
 
 
-def collect_routing(pbx, scope, families):
+def collect_routing(pbx, scope, families, tenants=(), extensions=None):
     db = FamilyDb(pbx)
     result = {}
     for uc, p, ext in valid_entries(scope):
@@ -96,7 +109,7 @@ def _clean(value, limit=80):
     return re.sub(r'[^\w .,&()/-]', '', value.replace('\\n', ' ').replace('\\t', ' '))[:limit].strip()
 
 
-def collect_cos(pbx, scope, families):
+def collect_cos(pbx, scope, families, tenants=(), extensions=None):
     pairs = valid_entries(scope)
     result, status = {}, 'ok'
     if pairs:
@@ -123,4 +136,46 @@ def collect_cos(pbx, scope, families):
     return {'status': status, 'states': result}
 
 
-COLLECTORS = {'blf': collect_blf, 'routing': collect_routing, 'cos': collect_cos}
+MAX_EXTENSIONS = 3000
+
+
+def valid_tenants(items):
+    out = []
+    for e in items or ():
+        try:
+            uc, pbx = int(e[0]), str(e[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if uc > 0 and PBX_ID.match(pbx):
+            out.append((uc, pbx))
+    return out
+
+
+def collect_extensions(pbx, scope, families, tenants=(), extensions=None):
+    """Every extension the PBX has in the visible tenants, with its display name: the UC lists them on Calls even when nobody uses the app."""
+    pairs = valid_tenants(tenants)
+    result, status = {}, 'ok'
+    if pairs:
+        ids = ','.join(sorted({p for _, p in pairs}, key=int))
+        rows = None
+        for cols in ("e.tenant_id,e.extension,IFNULL(e.name,'')", "e.tenant_id,e.extension,''"):
+            try:
+                rows = pbx.sql("SELECT %s FROM ombu_extensions e WHERE e.tenant_id IN (%s) ORDER BY e.tenant_id,e.extension LIMIT %d" % (cols, ids, MAX_EXTENSIONS))
+                break
+            except Exception:
+                continue
+        if rows is None:
+            status = 'pbx_query_failed'
+        else:
+            by_tenant = {}
+            for uc, p in pairs:
+                by_tenant.setdefault(p, []).append(uc)
+            for r in rows:
+                if len(r) != 3 or not EXT.match(r[1]):
+                    continue
+                for uc in by_tenant.get(r[0], []):
+                    result['%d:%s' % (uc, r[1])] = {'name': _clean(r[2])}
+    return {'status': status, 'states': result}
+
+
+COLLECTORS = {'extensions': collect_extensions, 'blf': collect_blf, 'routing': collect_routing, 'cos': collect_cos}
