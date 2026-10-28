@@ -77,7 +77,7 @@ class Parsers(unittest.TestCase):
         self.assertNotIn(('', '*65'), h)
 
     def test_hint_state(self):
-        self.assertEqual([hint_state(x) for x in ('State:Idle', 'State:InUse', 'State:Ringing', 'State:NOT_INUSE', 'State:Unavailable')],
+                         ['idle', 'busy', 'ringing', 'idle', 'unavailable', 'unknown'])
                          ['idle', 'busy', 'ringing', 'idle', 'unknown'])
 
     def test_astdb_and_discover(self):

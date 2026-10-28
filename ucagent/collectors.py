@@ -31,6 +31,8 @@ def hint_state(text):
     t = text.lower()
     if 'ringing' in t:
         return 'ringing'
+    if 'unavailable' in t:
+        return 'unavailable'      # no reachable device registered (legacy collectors reported this as unknown)
     if 'not_inuse' in t or 'not in use' in t or 'idle' in t:
         return 'idle'
     if 'inuse' in t or 'in use' in t or 'busy' in t:
