@@ -97,8 +97,9 @@ def main():
         secret = pathlib.Path(args.secret_file).read_text().strip()
     else:
         secret = os.environ.get('UCAGENT_SECRET') or getpass.getpass('Agent secret (hidden): ').strip()
+    secret = ''.join(secret.split())
     if not re.fullmatch(r'[0-9a-f]{64}', secret):
-        die('the secret must be the 64 hex characters shown once in Settings > PBX Agent')
+        die('the secret must be the 64 hex characters shown once in Settings > PBX Agent (received %d characters)' % len(secret))
 
     families = {}
     for t in args.tenant:
