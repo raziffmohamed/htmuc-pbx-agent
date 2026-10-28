@@ -1,7 +1,7 @@
 #!/bin/sh
 # Downloads a release of the HTM UC PBX agent, verifies its SHA-256, and runs the installer.
 #
-#   curl -fsSLO https://github.com/raziffmohamed/htmuc-pbx-agent/releases/download/vX.Y.Z/get.sh
+#   curl -fsSLO https://raw.githubusercontent.com/raziffmohamed/htmuc-pbx-agent/main/get.sh
 #   sh get.sh --version X.Y.Z --sha256 <64 hex from the release notes> [installer options...]
 #
 # Options before `--` are for this script; everything else is passed to install_agent.py.
@@ -22,8 +22,7 @@ case "$SHA" in *[!0-9a-f]*|"") echo "bad --sha256" >&2; exit 1;; esac
 [ "${#SHA}" = 64 ] || { echo "bad --sha256 length" >&2; exit 1; }
 if [ -z "$URL" ]; then
   [ -n "$VERSION" ] || { echo "--version or --url required" >&2; exit 1; }
-  [ "$REPO" != "raziffmohamed/htmuc-pbx-agent" ] || { echo "Set UCAGENT_REPO=owner/repo or pass --url." >&2; exit 1; }
-  URL="https://github.com/$REPO/releases/download/v$VERSION/ucagent-$VERSION.tar.gz"
+  URL="https://raw.githubusercontent.com/$REPO/main/releases/ucagent-$VERSION.tar.gz"
 fi
 case "$URL" in https://*) ;; *) echo "URL must be https" >&2; exit 1;; esac
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

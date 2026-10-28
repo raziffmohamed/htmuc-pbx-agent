@@ -15,7 +15,7 @@ The PBX opens no inbound port.
 1. In the UC: Settings > PBX Agent > Add an agent. Pick the tenants it may report on. Copy the ID and the secret (shown once).
 2. On the PBX:
 ```sh
-curl -fsSLO https://github.com/raziffmohamed/htmuc-pbx-agent/releases/download/vVERSION/get.sh
+curl -fsSLO https://raw.githubusercontent.com/raziffmohamed/htmuc-pbx-agent/main/get.sh
 sh get.sh --version VERSION --sha256 <hash from the release notes> --uc-url https://uc.example.com/uc/ --agent-id ag_...
 ```
 The script verifies the SHA-256 before running anything, asks for the secret with a hidden prompt, detects the tenant Asterisk families, writes
