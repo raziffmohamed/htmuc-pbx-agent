@@ -220,5 +220,40 @@ class Daemon(unittest.TestCase):
         self.assertEqual(delays, [2, 4, 8, 16, 32])
 
 
+
+class Enroll(unittest.TestCase):
+    def serve(self, status, body):
+        import http.server, threading
+        seen = {}
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen['path'] = self.path
+                seen['body'] = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+                self.send_response(status); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(body)
+            def log_message(self, *a): pass
+        srv = http.server.HTTPServer(('127.0.0.1', 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return 'http://127.0.0.1:%d/uc/' % srv.server_address[1], seen
+
+    def test_ok(self):
+        url, seen = self.serve(200, ('{"ok":true,"secret":"%s"}' % ('ab' * 32)).encode())
+        self.assertEqual(protocol.enroll(url, 'c' * 32, 'ag_0123456789abcdef', allow_http_localhost=True), 'ab' * 32)
+        self.assertEqual(seen['path'], '/uc/agent-api.php?action=enroll')
+        self.assertEqual(json.loads(seen['body']), {'code': 'c' * 32, 'agent_id': 'ag_0123456789abcdef'})
+
+    def test_refused_and_malformed(self):
+        url, _ = self.serve(401, b'{"ok":false}')
+        with self.assertRaises(protocol.ProtocolError) as cm:
+            protocol.enroll(url, 'c' * 32, 'ag_0123456789abcdef', allow_http_localhost=True)
+        self.assertIn('15 minutes', str(cm.exception))
+        url, _ = self.serve(200, b'{"ok":true,"secret":"short"}')
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.enroll(url, 'c' * 32, 'ag_0123456789abcdef', allow_http_localhost=True)
+
+    def test_https_required(self):
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.enroll('http://uc.example.com/uc/', 'c' * 32, 'ag_0123456789abcdef')
+
 if __name__ == '__main__':
     unittest.main()

@@ -92,3 +92,43 @@ class Client:
         if not isinstance(data, dict):
             raise ProtocolError('reply is not an object')
         return data
+
+
+def enroll(base_url, code, agent_id, ca_file=None, timeout=20, allow_http_localhost=False):
+    """Exchanges a one-time enrollment code (made in Settings > PBX Agent) for this agent's secret. TLS only; never redirects."""
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme != 'https' and not (allow_http_localhost and parsed.scheme == 'http' and parsed.hostname in ('127.0.0.1', 'localhost', '::1')):
+        raise ProtocolError('uc_url must be https')
+    if not parsed.hostname or parsed.username or parsed.password or parsed.fragment or parsed.query:
+        raise ProtocolError('uc_url must be a plain URL')
+    handlers = [_NoRedirect()]
+    if parsed.scheme == 'https':
+        ctx = ssl.create_default_context(cafile=ca_file) if ca_file else ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        handlers.append(urllib.request.HTTPSHandler(context=ctx))
+    body = json.dumps({'code': code, 'agent_id': agent_id}, separators=(',', ':')).encode()
+    req = urllib.request.Request(base_url.rstrip('/') + '/agent-api.php?action=enroll', data=body, method='POST')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('Accept', 'application/json')
+    try:
+        with urllib.request.build_opener(*handlers).open(req, timeout=timeout) as resp:
+            raw = resp.read(MAX_RESPONSE + 1)
+            status = resp.status
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403, 404):
+            raise ProtocolError('the enrollment code was refused (already used, expired after 15 minutes, or wrong). Create a new install command in Settings > PBX Agent.')
+        if e.code == 429:
+            raise ProtocolError('too many failed attempts; wait a few minutes')
+        raise ProtocolError('HTTP %d' % e.code)
+    except (urllib.error.URLError, OSError) as e:
+        raise ProtocolError('connection failed: %s' % getattr(e, 'reason', e))
+    if status != 200 or len(raw) > MAX_RESPONSE:
+        raise ProtocolError('unexpected reply')
+    try:
+        data = json.loads(raw.decode())
+    except ValueError:
+        raise ProtocolError('reply is not JSON')
+    secret = data.get('secret') if isinstance(data, dict) else None
+    if not data.get('ok') or not isinstance(secret, str) or len(secret) != 64 or any(c not in '0123456789abcdef' for c in secret):
+        raise ProtocolError('the UC did not return a valid secret')
+    return secret

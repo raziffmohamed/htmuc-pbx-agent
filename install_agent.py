@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Installs the HTM UC PBX agent on the PBX host (run as root).
 
-  python3 install_agent.py --uc-url https://uc.example.com/uc/ --agent-id ag_... [--secret-file F] [--yes]
+  python3 install_agent.py --uc-url https://uc.example.com/uc/ --agent-id ag_... [--secret-file F | --enroll] [--yes]
   python3 install_agent.py --uninstall
 
-The secret is read from --secret-file, $UCAGENT_SECRET, or a hidden prompt; it is never put on a command line.
+The secret is read from --secret-file, $UCAGENT_SECRET, a hidden prompt, or fetched with --enroll (one-time code from
+Settings > PBX Agent in $UCAGENT_ENROLL_CODE); it is never put on a command line.
 Nothing is changed on the PBX itself: the agent only reads Asterisk and the PBX database.
 """
 import argparse, getpass, json, os, pathlib, re, shutil, subprocess, sys
@@ -12,6 +13,7 @@ import argparse, getpass, json, os, pathlib, re, shutil, subprocess, sys
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from ucagent import __version__                      # noqa: E402
+from ucagent import protocol                          # noqa: E402
 
 APP = pathlib.Path('/opt/htmuc-agent')
 CFG_DIR = pathlib.Path('/etc/htmuc-agent')
@@ -66,6 +68,7 @@ def main():
     ap.add_argument('--uc-url')
     ap.add_argument('--agent-id')
     ap.add_argument('--secret-file')
+    ap.add_argument('--enroll', action='store_true', help='fetch the secret from the UC with the one-time code in $UCAGENT_ENROLL_CODE')
     ap.add_argument('--ca-file', help='PEM file when the UC uses a private CA')
     ap.add_argument('--asterisk', default='/usr/sbin/asterisk')
     ap.add_argument('--tenant', action='append', default=[], metavar='PBXID=FAMILY', help='repeatable; default: detect')
@@ -109,7 +112,16 @@ def main():
     aid = (args.agent_id or ask('Agent ID (ag_...)')).strip()
     if not re.fullmatch(r'ag_[0-9a-f]{8,32}', aid):
         die('agent id looks wrong (expected ag_ followed by 8-32 hex characters, got %r)' % aid)
-    if args.secret_file:
+    if args.enroll:
+        code = os.environ.get('UCAGENT_ENROLL_CODE', '').strip()
+        if not re.fullmatch(r'[0-9a-f]{32}', code):
+            die('--enroll needs the one-time code in $UCAGENT_ENROLL_CODE (32 hex characters)')
+        try:
+            secret = protocol.enroll(url if url.endswith('/') else url + '/', code, aid, ca_file=args.ca_file, allow_http_localhost=args.allow_http_localhost)
+        except protocol.ProtocolError as e:
+            die(str(e))
+        print('Enrolled: the UC issued this agent its secret.')
+    elif args.secret_file:
         secret = pathlib.Path(args.secret_file).read_text().strip()
     else:
         secret = os.environ.get('UCAGENT_SECRET') or getpass.getpass('Agent secret (hidden): ').strip()
