@@ -1,0 +1,28 @@
+[Unit]
+Description=HTM UC PBX agent
+Documentation=https://github.com/raziffmohamed/htmuc-pbx-agent
+After=network-online.target asterisk.service mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I /opt/htmuc-agent/htmuc-agent --config /etc/htmuc-agent/agent.json run
+WorkingDirectory=/opt/htmuc-agent
+User=root
+Restart=always
+RestartSec=5
+# Read-only helper: it only runs fixed `asterisk -rx` queries and one SELECT, and talks outbound HTTPS to the UC.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target
